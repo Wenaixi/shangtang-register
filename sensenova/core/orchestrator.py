@@ -54,7 +54,8 @@ class RegistrationOrchestrator:
 
         # 1. Challenge
         ss.fetch_login_challenge()
-        ss.check_challenge()
+        if not ss.check_challenge():
+            raise RuntimeError("challenge 无效, 请重试")
 
         # 2. 取号
         self._emit("step", "2/8 获取手机号")
@@ -71,7 +72,9 @@ class RegistrationOrchestrator:
 
             # 5. 校验
             self._emit("step", "5/8 校验验证码")
-            ss.verify_sms(code)
+            verify_resp = ss.verify_sms(code)
+            if verify_resp.get("code") != 1 and "access_token" not in str(verify_resp):
+                raise RuntimeError(f"验证码校验失败: {verify_resp.get('msg', 'unknown')}")
 
             # 6. 注册
             self._emit("step", "6/8 注册账号")

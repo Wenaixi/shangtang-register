@@ -46,12 +46,14 @@ class SMSClient:
         resp = self.session.get(
             f"{self.base_url}{path}", params=params, proxies=self.proxies, timeout=15
         )
+        resp.raise_for_status()
         return resp.json()
 
     def _post(self, path: str, data: dict = None) -> dict:
         resp = self.session.post(
             f"{self.base_url}{path}", data=data, proxies=self.proxies, timeout=15
         )
+        resp.raise_for_status()
         return resp.json()
 
     # ---------- 项目查询 ----------
@@ -125,10 +127,10 @@ class SMSClient:
         self, phone: str, max_retries: int = 15, interval: int = 5
     ) -> str:
         """轮询获取短信验证码"""
+        import time as _time
         for i in range(max_retries):
             if i > 0:
-                import time
-                time.sleep(interval)
+                _time.sleep(interval)
 
             data = self._post("/api/user/getVerifyCode", {
                 "project_id": self.project_id, "phone": phone,

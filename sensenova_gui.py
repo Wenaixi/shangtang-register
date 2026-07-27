@@ -229,6 +229,11 @@ class SenseNovaGUI:
         app_config.SMS_PARAGRAPH   = self._k_SMS_PARAGRAPH.get().strip()
         app_config.REGISTER_COUNT  = self.count_var.get()
 
+        # 清除 placeholder 值 (不能把 "1=mobile 2=unicom" 当真实值写入)
+        for attr, ph in [("SMS_ASCRIPTION", "1=mobile 2=unicom"), ("SMS_PARAGRAPH", "e.g. 170")]:
+            if getattr(app_config, attr, "") == ph:
+                setattr(app_config, attr, "")
+
     def _save(self):
         self._sync(); app_config.save_to_file(); self._put("s","config saved")
 
@@ -236,23 +241,36 @@ class SenseNovaGUI:
     # Results: 每个账号存为独立 JSON: data/shangtang-{username}.json
     # ================================================================
     def _load_results(self):
-        """热加载: 从磁盘扫描, 只添加树中不存在的账号 (不删除已有行)"""
-        if not self._data_dir.exists(): return
-        existing = {self.tree.item(it)["values"][0] for it in self.tree.get_children()}
-        added = 0
+        """从磁盘扫描所有 shangtang-*.json 并重建树 (保留已有行中不在磁盘的)"""
+        if not self._data_dir.exists():
+            return
+        # 现有树中所有用户名
+        tree_users = {self.tree.item(it)["values"][0] for it in self.tree.get_children()}
+        # 磁盘中所有用户名
+        disk_users = set()
+        disk_data = {}
         for f in sorted(self._data_dir.glob("shangtang-*.json")):
             try:
                 r = json.loads(f.read_text(encoding="utf-8"))
-                uname = r.get("username","")
-                if uname and uname not in existing:
-                    self.tree.insert("", "end", values=(
-                        uname, r.get("password",""), r.get("phone",""),
-                        r.get("api_key",""), r.get("create_time","")))
-                    added += 1
+                u = r.get("username", "")
+                if u:
+                    disk_users.add(u)
+                    disk_data[u] = (u, r.get("password",""), r.get("phone",""),
+                                    r.get("api_key",""), r.get("create_time",""))
             except Exception:
                 pass
+        # 删除树中在磁盘已不存在的行
+        for it in self.tree.get_children():
+            if self.tree.item(it)["values"][0] not in disk_users:
+                self.tree.delete(it)
+        # 添加磁盘中有但树中没有的
+        added = 0
+        for u in sorted(disk_users):
+            if u not in tree_users:
+                self.tree.insert("", "end", values=disk_data[u])
+                added += 1
         if added:
-            self._put("m", f"reloaded {added} new account(s)")
+            self._put("m", f"loaded {added} new account(s)")
         self.stat_count.set(f"Records: {len(self.tree.get_children())}")
 
     def _tree_rows(self) -> list[dict]:

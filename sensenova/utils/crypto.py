@@ -6,14 +6,14 @@ PKCE 密钥交换 / 密码生成 / JWT 解码 / 随机字符串
 import base64
 import hashlib
 import json
-import random
+import secrets
 import string
 from typing import Optional
 
 
 def random_str(length: int = 12, chars: str = string.ascii_lowercase + string.digits) -> str:
-    """生成指定长度的随机字符串"""
-    return "".join(random.choices(chars, k=length))
+    """生成指定长度的安全随机字符串"""
+    return "".join(secrets.choice(chars) for _ in range(length))
 
 
 def generate_pkce() -> tuple[str, str]:
@@ -29,19 +29,19 @@ def generate_pkce() -> tuple[str, str]:
 
 
 def gen_password(length: int = 16) -> str:
-    """生成满足复杂度要求的随机密码
-
-    包含大写字母、小写字母、数字、特殊字符各至少一个
-    """
+    """生成满足复杂度要求的安全随机密码"""
     safe_chars = string.ascii_letters + string.digits + "!@#$%^&*()_+-="
     password = [
-        random.choice(string.ascii_uppercase),
-        random.choice(string.ascii_lowercase),
-        random.choice(string.digits),
-        random.choice("!@#$%^&*"),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*"),
     ]
-    password.extend(random.choices(safe_chars, k=length - 4))
-    random.shuffle(password)
+    password += [secrets.choice(safe_chars) for _ in range(length - 4)]
+    # 洗牌
+    for i in range(len(password) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        password[i], password[j] = password[j], password[i]
     return "".join(password)
 
 
@@ -60,7 +60,7 @@ def decode_jwt_payload(token: str) -> Optional[dict]:
         if len(parts) < 2:
             return None
         payload = parts[1]
-        payload += "=" * (4 - len(payload) % 4)
+        payload += "=" * (-len(payload) % 4)
         decoded = base64.urlsafe_b64decode(payload)
         return json.loads(decoded)
     except Exception:

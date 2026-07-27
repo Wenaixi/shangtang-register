@@ -110,7 +110,9 @@ def cmd_register(count: int):
     if not config.SMS_PROJECT_ID:
         errors.append("SMS_PROJECT_ID 未设置")
     if errors:
-        print("配置缺失:"); [print(f"  - {e}") for e in errors]
+        print("配置缺失:")
+        for e in errors:
+            print(f"  - {e}")
         print("\n请编辑 .env 文件或通过 GUI 配置")
         return 1
 

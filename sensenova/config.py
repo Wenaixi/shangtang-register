@@ -49,12 +49,14 @@ class Config:
         self.HTTP_PROXY = os.environ.get("HTTP_PROXY", "") or os.environ.get("http_proxy", "")
         self.HTTPS_PROXY = os.environ.get("HTTPS_PROXY", "") or os.environ.get("https_proxy", "")
         self.SMS_PROJECT_ID = os.environ.get("SMS_PROJECT_ID", "")
-        self.SMS_ISP = os.environ.get("SMS_ISP", "")
         self.SMS_ASCRIPTION = os.environ.get("SMS_ASCRIPTION", "")
         self.SMS_PARAGRAPH = os.environ.get("SMS_PARAGRAPH", "")
         self.SMS_CARD_ENGINE = os.environ.get("SMS_CARD_ENGINE", "false").lower() == "true"
         self.SMS_CODE_ID = os.environ.get("SMS_CODE_ID", "")
-        self.REGISTER_COUNT = int(os.environ.get("REGISTER_COUNT", "1"))
+        try:
+            self.REGISTER_COUNT = int(os.environ.get("REGISTER_COUNT", "1"))
+        except (ValueError, TypeError):
+            self.REGISTER_COUNT = 1
         self.REGISTER_OUTPUT = os.environ.get("REGISTER_OUTPUT", "data/export.json")
 
     @property
@@ -68,19 +70,27 @@ class Config:
 
     def save_to_file(self) -> None:
         """将当前配置写回 .env 文件"""
-        lines = []
-        lines.append(f"SMS_BASE_URL={self.SMS_BASE_URL}\n")
-        lines.append(f"SMS_TOKEN={self.SMS_TOKEN}\n")
-        lines.append(f"HTTP_PROXY={self.HTTP_PROXY}\n")
-        lines.append(f"HTTPS_PROXY={self.HTTPS_PROXY}\n")
-        lines.append(f"SMS_PROJECT_ID={self.SMS_PROJECT_ID}\n")
-        lines.append(f"SMS_ASCRIPTION={self.SMS_ASCRIPTION}\n")
-        lines.append(f"SMS_PARAGRAPH={self.SMS_PARAGRAPH}\n")
-        lines.append(f"SMS_CARD_ENGINE={'true' if self.SMS_CARD_ENGINE else 'false'}\n")
-        lines.append(f"SMS_CODE_ID={self.SMS_CODE_ID}\n")
-        lines.append(f"REGISTER_COUNT={self.REGISTER_COUNT}\n")
-        lines.append(f"REGISTER_OUTPUT={self.REGISTER_OUTPUT}\n")
+        lines = [
+            f"SMS_BASE_URL={self.SMS_BASE_URL}\n",
+            f"SMS_TOKEN={self.SMS_TOKEN}\n",
+            f"HTTP_PROXY={self.HTTP_PROXY}\n",
+            f"HTTPS_PROXY={self.HTTPS_PROXY}\n",
+            f"SMS_PROJECT_ID={self.SMS_PROJECT_ID}\n",
+            f"SMS_ASCRIPTION={self.SMS_ASCRIPTION}\n",
+            f"SMS_PARAGRAPH={self.SMS_PARAGRAPH}\n",
+            f"SMS_CARD_ENGINE={'true' if self.SMS_CARD_ENGINE else 'false'}\n",
+            f"SMS_CODE_ID={self.SMS_CODE_ID}\n",
+            f"REGISTER_COUNT={self.REGISTER_COUNT}\n",
+            f"REGISTER_OUTPUT={self.REGISTER_OUTPUT}\n",
+        ]
         ENV_PATH.write_text("".join(lines), encoding="utf-8")
+        # 同步到 os.environ
+        for key in ("SMS_BASE_URL","SMS_TOKEN","HTTP_PROXY","HTTPS_PROXY",
+                     "SMS_PROJECT_ID","SMS_ASCRIPTION","SMS_PARAGRAPH",
+                     "SMS_CODE_ID","REGISTER_COUNT","REGISTER_OUTPUT"):
+            val = getattr(self, key, "")
+            if val:
+                os.environ[key] = str(val)
 
 
 config = Config()
