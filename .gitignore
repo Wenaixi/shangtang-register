@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 环境配置 (含敏感信息)
+.env
+
+# 运行时数据 (含真实账号)
+data/
+
+# IDE / 编辑器
+.vscode/
+.idea/
+
+# OMC 运行时状态
+.omc/
