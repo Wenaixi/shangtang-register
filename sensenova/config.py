@@ -51,10 +51,11 @@ class Config:
         self.SMS_PROJECT_ID = os.environ.get("SMS_PROJECT_ID", "")
         self.SMS_ISP = os.environ.get("SMS_ISP", "")
         self.SMS_ASCRIPTION = os.environ.get("SMS_ASCRIPTION", "")
+        self.SMS_PARAGRAPH = os.environ.get("SMS_PARAGRAPH", "")
         self.SMS_CARD_ENGINE = os.environ.get("SMS_CARD_ENGINE", "false").lower() == "true"
         self.SMS_CODE_ID = os.environ.get("SMS_CODE_ID", "")
         self.REGISTER_COUNT = int(os.environ.get("REGISTER_COUNT", "1"))
-        self.REGISTER_OUTPUT = os.environ.get("REGISTER_OUTPUT", "data/accounts.json")
+        self.REGISTER_OUTPUT = os.environ.get("REGISTER_OUTPUT", "data/export.json")
 
     @property
     def proxies(self) -> dict:
@@ -74,6 +75,7 @@ class Config:
         lines.append(f"HTTPS_PROXY={self.HTTPS_PROXY}\n")
         lines.append(f"SMS_PROJECT_ID={self.SMS_PROJECT_ID}\n")
         lines.append(f"SMS_ASCRIPTION={self.SMS_ASCRIPTION}\n")
+        lines.append(f"SMS_PARAGRAPH={self.SMS_PARAGRAPH}\n")
         lines.append(f"SMS_CARD_ENGINE={'true' if self.SMS_CARD_ENGINE else 'false'}\n")
         lines.append(f"SMS_CODE_ID={self.SMS_CODE_ID}\n")
         lines.append(f"REGISTER_COUNT={self.REGISTER_COUNT}\n")

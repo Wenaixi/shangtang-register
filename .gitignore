@@ -1,17 +1,40 @@
-# Python
+# Python 编译产物
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
 
-# 环境配置 (含敏感信息)
+# 虚拟环境
+venv/
+.venv/
 .env
 
-# 运行时数据 (含真实账号)
+# 运行时数据 (含账号敏感信息)
 data/
 
 # IDE / 编辑器
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+Thumbs.db
+.DS_Store
 
 # OMC 运行时状态
 .omc/
+
+# 测试 / 临时文件
+_test_*.py
+*.tmp
+*.log
+
+# HAR 文件 (大文件, 仅参考)
+*.har
+
+# 项目文档 (本地记忆, 不入库)
+CLAUDE.md

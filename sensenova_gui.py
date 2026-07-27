@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
-"""
-商汤自动注册工具 - GUI (tkinter)
-精致的双栏布局: 左侧配置区, 右侧日志 + 结果区
-"""
+"""SenseNova Auto Register — 纯黑白极简 GUI"""
 
 import json
 import queue
 import sys
 import threading
 import time
+import tkinter
 import traceback
 from pathlib import Path
-from tkinter import Tk, Toplevel, StringVar, IntVar, BooleanVar, messagebox, filedialog
+from tkinter import Tk, Toplevel, StringVar, IntVar, messagebox, filedialog
 from tkinter import ttk
-from tkinter.scrolledtext import ScrolledText
 
-# 确保项目根目录在路径中
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -24,632 +20,461 @@ from sensenova.core.sms_client import SMSClient
 from sensenova.utils.log import setup as setup_log
 from sensenova.config import config as app_config
 
-
-# ============================================================
-# 样式常量
-# ============================================================
-
-COLORS = {
-    "bg":           "#f5f6fa",
-    "sidebar":      "#1e1e2e",
-    "sidebar_text": "#cdd6f4",
-    "sidebar_label":"#a6adc8",
-    "card_bg":      "#ffffff",
-    "accent":       "#6c5ce7",
-    "accent_hover": "#5a4bd1",
-    "success":      "#00b894",
-    "danger":       "#e17055",
-    "warning":      "#fdcb6e",
-    "text":         "#2d3436",
-    "text_muted":   "#636e72",
-    "border":       "#e2e8f0",
-    "input_bg":     "#f8f9fc",
-    "log_bg":       "#1a1a2e",
-    "log_fg":       "#00ff88",
+C = {
+    "bg": "#080808", "panel": "#0e0e0e", "card": "#131313",
+    "accent": "#ffffff", "accent2": "#d4d4d4", "text": "#e0e0e0",
+    "muted": "#707070", "faint": "#404040", "border": "#262626",
+    "hover": "#1c1c1c", "input_bg": "#111111", "input_border": "#333333",
+    "log_bg": "#060606",
 }
+FONT = "Microsoft YaHei UI" if sys.platform == "win32" else "Segoe UI"
+MONO = ("Cascadia Mono", 9) if sys.platform == "win32" else ("SF Mono", 10)
 
-FONT_FAMILY = "Microsoft YaHei UI" if sys.platform == "win32" else "Segoe UI"
-MONO_FONT = ("Cascadia Code", 9) if sys.platform == "win32" else ("SF Mono", 10)
-
-
-# ============================================================
-# GUI Application
-# ============================================================
 
 class SenseNovaGUI:
-    """商汤自动注册 GUI"""
 
     def __init__(self):
         self.root = Tk()
-        self.root.title("SenseNova 商汤自动注册工具")
-        self.root.geometry("1100x720")
-        self.root.minsize(960, 600)
-        self.root.configure(bg=COLORS["bg"])
-
-        # 任务状态
+        self.root.title("SenseNova")
+        self.root.geometry("1080x700")
+        self.root.minsize(920, 560)
+        self.root.configure(bg=C["bg"])
         self._running = False
         self._stop_flag = threading.Event()
         self._msg_queue = queue.Queue()
-        self._result_queue = queue.Queue()
-
-        # 当前项目列表缓存
-        self._projects_cache: list = []
-
-        self._build_ui()
-        self._poll_queue()
-        self._load_config_to_ui()
+        self._success = 0; self._fail = 0
+        self._data_dir = PROJECT_ROOT / "data"
+        self._build(); self._poll(); self._load(); self._load_results()
 
     # ================================================================
-    # UI Construction
-    # ================================================================
+    def _build(self):
+        self.root.grid_columnconfigure(0, weight=0)
+        self.root.grid_columnconfigure(1, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+        self._sidebar(); self._main(); self._statusbar()
 
-    def _build_ui(self):
-        """构建完整界面"""
-        self._make_sidebar()
-        self._make_main_area()
-        self._make_statusbar()
+    def _sidebar(self):
+        w = 292
+        sb = tkinter.Frame(self.root, bg=C["panel"], width=w, height=700)
+        sb.grid(row=0, column=0, sticky="ns"); sb.grid_propagate(False)
+        h = tkinter.Frame(sb, bg=C["panel"]); h.pack(fill="x", padx=20, pady=(22,0))
+        tkinter.Label(h, text="SenseNova", font=(FONT,15,"bold"),
+            fg=C["accent"], bg=C["panel"]).pack(anchor="w")
+        tkinter.Label(h, text="Auto Register", font=(FONT,10),
+            fg=C["muted"], bg=C["panel"]).pack(anchor="w")
+        tkinter.Frame(sb, bg=C["border"], height=1).pack(fill="x", padx=20, pady=(14,10))
+        cv = tkinter.Canvas(sb, bg=C["panel"], highlightthickness=0)
+        sf = tkinter.Frame(cv, bg=C["panel"])
+        sf.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.create_window((0,0), window=sf, anchor="nw", width=w-2)
+        cv.pack(side="left", fill="both", expand=True)
+        # --- SMS ---
+        self._sec(sf, "SMS")
+        c1 = self._card(sf)
+        self._inp(c1,"URL","SMS_BASE_URL"); self._inp(c1,"Token","SMS_TOKEN",secret=True)
+        self._inp(c1,"PID","SMS_PROJECT_ID")
+        r1 = tkinter.Frame(c1, bg=C["card"]); r1.pack(fill="x", padx=14, pady=(2,8))
+        self.pname_lbl = tkinter.Label(r1, text=" No project", font=(FONT,8),
+            fg=C["faint"], bg=C["card"], anchor="w"); self.pname_lbl.pack(side="left")
+        self._btns(c1,r1,"Search",self._search_project).pack(side="right")
+        # --- Proxy ---
+        self._sec(sf,"Proxy"); c2 = self._card(sf)
+        self._inp(c2,"HTTP","HTTP_PROXY"); self._inp(c2,"HTTPS","HTTPS_PROXY")
+        # --- Register ---
+        self._sec(sf,"Register"); c3 = self._card(sf)
+        self._inp(c3,"Ascription","SMS_ASCRIPTION",ph="1=mobile 2=unicom")
+        self._inp(c3,"Paragraph","SMS_PARAGRAPH",ph="e.g. 170")
+        self.count_var = IntVar(value=1); self._inp(c3,"Count",None,var=self.count_var)
+        # --- Actions ---
+        a = tkinter.Frame(sf, bg=C["panel"]); a.pack(fill="x", padx=20, pady=(18,14))
+        self.start_btn = tkinter.Button(a, text="Start", font=(FONT,10,"bold"),
+            bg=C["accent"], fg="#000", activebackground=C["accent2"],
+            activeforeground="#000", relief="flat", cursor="hand2",
+            padx=24, pady=7, border=0, command=self._start); self.start_btn.pack(side="left")
+        self.stop_btn = tkinter.Button(a, text="Stop", font=(FONT,10),
+            bg=C["card"], fg=C["text"], activebackground=C["hover"],
+            relief="flat", cursor="hand2", padx=20, pady=7, border=0,
+            command=self._stop, state="disabled"); self.stop_btn.pack(side="left", padx=(8,0))
+        tkinter.Button(a, text="Save", font=(FONT,9), fg=C["muted"], bg=C["panel"],
+            activeforeground=C["accent"], relief="flat", cursor="hand2", border=0,
+            command=self._save).pack(side="right")
+        self.root.bind("<MouseWheel>", lambda e: self._scroll(e, cv))
 
-    def _make_sidebar(self):
-        """左侧配置面板"""
-        sidebar = tkinter.Frame(self.root, bg=COLORS["sidebar"], width=320)
-        sidebar.pack(side="left", fill="y")
-        sidebar.pack_propagate(False)
+    def _sec(self,p,t):
+        tkinter.Label(p, text=t, font=(FONT,8,"bold"),
+            fg=C["muted"], bg=C["panel"]).pack(anchor="w", padx=20, pady=(16,5))
+    def _card(self,p):
+        f = tkinter.Frame(p, bg=C["card"]); f.pack(fill="x", padx=14, pady=(0,4)); return f
 
-        # 标题
-        title = tkinter.Label(
-            sidebar, text="SenseNova\nAuto Register",
-            font=(FONT_FAMILY, 16, "bold"),
-            fg=COLORS["accent"], bg=COLORS["sidebar"], justify="left",
-        )
-        title.pack(anchor="w", padx=20, pady=(20, 5))
-
-        tkinter.Label(
-            sidebar, text="商汤科技自动注册工具",
-            font=(FONT_FAMILY, 9), fg=COLORS["sidebar_label"], bg=COLORS["sidebar"],
-        ).pack(anchor="w", padx=20, pady=(0, 20))
-
-        # 滚动区域
-        canvas = tkinter.Canvas(sidebar, bg=COLORS["sidebar"], highlightthickness=0)
-        scrollbar = ttk.Scrollbar(sidebar, orient="vertical", command=canvas.yview)
-        scroll_frame = tkinter.Frame(canvas, bg=COLORS["sidebar"])
-
-        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll_frame, anchor="nw", width=300)
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.pack(side="left", fill="both", expand=True, padx=(10, 0))
-        scrollbar.pack(side="right", fill="y")
-
-        # --- 接码平台 ---
-        self._section_label(scroll_frame, "接码平台")
-        card = self._card(scroll_frame)
-        self.sms_url_var = self._field(card, "API 地址", "SMS_BASE_URL")
-        self.sms_token_var = self._field(card, "fcToken", "SMS_TOKEN", show="*")
-        self.sms_project_var = self._field(card, "项目 ID", "SMS_PROJECT_ID")
-
-        # 项目搜索按钮
-        btn_frame = tkinter.Frame(card, bg=COLORS["card_bg"])
-        btn_frame.pack(fill="x", padx=12, pady=(0, 8))
-        self._btn(btn_frame, "搜索项目", self._search_project, width=14).pack(side="right")
-
-        # 项目名 Label
-        self.project_name_label = tkinter.Label(
-            card, text="未选择项目", font=(FONT_FAMILY, 9),
-            fg=COLORS["text_muted"], bg=COLORS["card_bg"], anchor="w",
-        )
-        self.project_name_label.pack(fill="x", padx=14, pady=(0, 8))
-
-        # --- 代理 ---
-        self._section_label(scroll_frame, "网络代理")
-        card2 = self._card(scroll_frame)
-        self.proxy_http_var = self._field(card2, "HTTP 代理", "HTTP_PROXY")
-        self.proxy_https_var = self._field(card2, "HTTPS 代理", "HTTPS_PROXY")
-
-        # --- 注册设置 ---
-        self._section_label(scroll_frame, "注册设置")
-        card3 = self._card(scroll_frame)
-        self.ascription_var = self._field(card3, "卡号类型", "SMS_ASCRIPTION",
-                                           placeholder="1=移动 2=联通 留空=不限")
-        self.count_var = IntVar(value=1)
-        self._field(card3, "注册数量", None, var=self.count_var)
-
-        # --- 操作按钮 ---
-        btn_area = tkinter.Frame(scroll_frame, bg=COLORS["sidebar"])
-        btn_area.pack(fill="x", padx=10, pady=(15, 10))
-        self.start_btn = tkinter.Button(
-            btn_area, text="开始注册", font=(FONT_FAMILY, 10, "bold"),
-            bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
-            activeforeground="white", relief="flat", cursor="hand2",
-            padx=20, pady=8, border=0, command=self._start_register,
-        )
-        self.start_btn.pack(side="left", padx=(0, 8))
-
-        self.stop_btn = tkinter.Button(
-            btn_area, text="停止", font=(FONT_FAMILY, 10),
-            bg=COLORS["danger"], fg="white", relief="flat", cursor="hand2",
-            padx=16, pady=8, border=0, command=self._stop_register, state="disabled",
-        )
-        self.stop_btn.pack(side="left")
-
-        tkinter.Button(
-            btn_area, text="保存配置", font=(FONT_FAMILY, 9),
-            fg=COLORS["sidebar_text"], bg=COLORS["sidebar"],
-            relief="flat", cursor="hand2", command=self._save_config,
-        ).pack(side="right")
-
-        # 让 sidebar 可滚
-        self.root.bind("<MouseWheel>", lambda e: self._on_scroll(e, canvas))
-
-    def _section_label(self, parent, text):
-        tkinter.Label(
-            parent, text=text,
-            font=(FONT_FAMILY, 8, "bold"), fg=COLORS["sidebar_label"],
-            bg=COLORS["sidebar"],
-        ).pack(anchor="w", padx=20, pady=(14, 4))
-
-    def _card(self, parent):
-        f = tkinter.Frame(parent, bg=COLORS["card_bg"], highlightthickness=1,
-                         highlightbackground=COLORS["border"], highlightcolor=COLORS["border"])
-        f.pack(fill="x", padx=10, pady=(0, 2))
-        return f
-
-    def _field(self, parent, label, config_key=None, var=None, show=None, placeholder=""):
-        row = tkinter.Frame(parent, bg=COLORS["card_bg"])
-        row.pack(fill="x", padx=12, pady=(6, 0))
-        tkinter.Label(
-            row, text=label, font=(FONT_FAMILY, 8),
-            fg=COLORS["text_muted"], bg=COLORS["card_bg"], width=9, anchor="w",
-        ).pack(side="left")
-        if var is None:
-            var = StringVar()
-        entry = tkinter.Entry(
-            row, textvariable=var, font=(FONT_FAMILY, 9),
-            bg=COLORS["input_bg"], relief="flat", highlightthickness=1,
-            highlightbackground=COLORS["border"], highlightcolor=COLORS["accent"],
-        )
-        if show:
-            entry.configure(show=show)
-        if placeholder and isinstance(var, StringVar) and not var.get():
-            var.set(placeholder)
-            entry.configure(fg=COLORS["text_muted"])
-            entry.bind("<FocusIn>", lambda e: self._on_focus_in(var, entry, placeholder))
-            entry.bind("<FocusOut>", lambda e: self._on_focus_out(var, entry, placeholder))
-        entry.pack(fill="x", expand=True)
-        if config_key:
-            setattr(self, f"_cfg_{config_key}", var)
+    def _inp(self,p,label, key=None, var=None, secret=False, ph=""):
+        r = tkinter.Frame(p, bg=C["card"]); r.pack(fill="x", padx=14, pady=(7,0))
+        tkinter.Label(r, text=label, font=(FONT,8), fg=C["muted"], bg=C["card"],
+            width=9, anchor="w").pack(side="left")
+        if var is None: var = StringVar()
+        e = tkinter.Entry(r, textvariable=var, font=(FONT,9), bg=C["input_bg"],
+            fg=C["text"], insertbackground=C["accent"], relief="flat",
+            highlightthickness=1, highlightbackground=C["input_border"],
+            highlightcolor=C["accent2"])
+        if secret: e.configure(show="*")
+        e.pack(fill="x", expand=True)
+        if key: setattr(self, f"_k_{key}", var)
+        if ph and isinstance(var, StringVar) and not var.get():
+            var.set(ph); e.configure(fg=C["faint"])
+            e.bind("<FocusIn>",  lambda ev, v=var, en=e: self._phi(v,en,ph))
+            e.bind("<FocusOut>", lambda ev, v=var, en=e: self._pho(v,en,ph))
         return var
 
-    def _btn(self, parent, text, command, width=10):
-        return tkinter.Button(
-            parent, text=text, font=(FONT_FAMILY, 9),
-            bg=COLORS["accent"], fg="white", activebackground=COLORS["accent_hover"],
-            activeforeground="white", relief="flat", cursor="hand2",
-            padx=8, pady=2, border=0, command=command, width=width,
-        )
-
     @staticmethod
-    def _on_focus_in(var, entry, placeholder):
-        if var.get() == placeholder:
-            var.set("")
-            entry.configure(fg="black")
-
+    def _phi(v,e,ph):
+        if v.get() == ph: v.set(""); e.configure(fg=C["text"])
     @staticmethod
-    def _on_focus_out(var, entry, placeholder):
-        if not var.get():
-            var.set(placeholder)
-            entry.configure(fg=COLORS["text_muted"])
-
-    def _on_scroll(self, event, canvas):
-        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    # ================================================================
-    # Main Area
-    # ================================================================
-
-    def _make_main_area(self):
-        main = tkinter.Frame(self.root, bg=COLORS["bg"])
-        main.pack(side="left", fill="both", expand=True, padx=(0, 0))
-
-        # 顶部进度条
-        self.progress_frame = tkinter.Frame(main, bg=COLORS["bg"])
-        self.progress_frame.pack(fill="x", padx=20, pady=(16, 0))
-
-        self.step_label = tkinter.Label(
-            self.progress_frame, text="就绪，等待开始...",
-            font=(FONT_FAMILY, 11), fg=COLORS["text"], bg=COLORS["bg"],
-        )
-        self.step_label.pack(anchor="w")
-
-        self.progress = ttk.Progressbar(
-            self.progress_frame, mode="indeterminate", length=400,
-        )
-
-        # 日志区
-        log_label = tkinter.Label(
-            main, text="运行日志", font=(FONT_FAMILY, 9, "bold"),
-            fg=COLORS["text_muted"], bg=COLORS["bg"],
-        )
-        log_label.pack(anchor="w", padx=20, pady=(14, 4))
-
-        log_frame = tkinter.Frame(main, bg=COLORS["log_bg"], highlightthickness=1,
-                                 highlightbackground=COLORS["border"])
-        log_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
-
-        self.log_text = tkinter.Text(
-            log_frame, font=MONO_FONT, bg=COLORS["log_bg"], fg=COLORS["log_fg"],
-            relief="flat", wrap="word", padx=10, pady=8,
-            insertbackground=COLORS["log_fg"],
-        )
-        self.log_text.pack(side="left", fill="both", expand=True)
-
-        log_scroll = ttk.Scrollbar(log_frame, command=self.log_text.yview)
-        log_scroll.pack(side="right", fill="y")
-        self.log_text.configure(yscrollcommand=log_scroll.set)
-
-        # 配置 tag 样式
-        self.log_text.tag_configure("info", foreground="#00cec9")
-        self.log_text.tag_configure("success", foreground="#00b894")
-        self.log_text.tag_configure("error", foreground="#e17055")
-        self.log_text.tag_configure("warning", foreground="#fdcb6e")
-        self.log_text.tag_configure("step", foreground="#a29bfe", font=(MONO_FONT[0], MONO_FONT[1], "bold"))
-
-        # 结果区
-        result_label = tkinter.Label(
-            main, text="注册结果", font=(FONT_FAMILY, 9, "bold"),
-            fg=COLORS["text_muted"], bg=COLORS["bg"],
-        )
-        result_label.pack(anchor="w", padx=20, pady=(4, 4))
-
-        tree_frame = tkinter.Frame(main, bg=COLORS["card_bg"], highlightthickness=1,
-                                  highlightbackground=COLORS["border"])
-        tree_frame.pack(fill="x", padx=20, pady=(0, 16))
-
-        columns = ("username", "password", "phone", "api_key", "time")
-        self.tree = ttk.Treeview(
-            tree_frame, columns=columns, show="headings", height=5,
-        )
-        self.tree.heading("username", text="用户名")
-        self.tree.heading("password", text="密码")
-        self.tree.heading("phone", text="手机号")
-        self.tree.heading("api_key", text="API Key")
-        self.tree.heading("time", text="时间")
-        self.tree.column("username", width=140)
-        self.tree.column("password", width=140)
-        self.tree.column("phone", width=120)
-        self.tree.column("api_key", width=280)
-        self.tree.column("time", width=140)
-
-        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=tree_scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        tree_scroll.pack(side="right", fill="y")
-
-        # 结果操作按钮
-        btn_row = tkinter.Frame(main, bg=COLORS["bg"])
-        btn_row.pack(fill="x", padx=20, pady=(0, 20))
-        self._btn(btn_row, "复制 API Key", self._copy_api_key, width=14).pack(side="left", padx=(0, 8))
-        self._btn(btn_row, "导出 JSON", self._export_results, width=14).pack(side="left", padx=(0, 8))
-        self._btn(btn_row, "清空日志", self._clear_log, width=10).pack(side="right")
-
-    def _make_statusbar(self):
-        bar = tkinter.Frame(self.root, bg=COLORS["sidebar"], height=28)
-        bar.pack(side="bottom", fill="x")
-        bar.pack_propagate(False)
-        self.status_var = StringVar(value="就绪")
-        tkinter.Label(
-            bar, textvariable=self.status_var, font=(FONT_FAMILY, 8),
-            fg=COLORS["sidebar_label"], bg=COLORS["sidebar"],
-        ).pack(side="left", padx=14)
-        self.stat_count = StringVar(value="成功: 0 | 失败: 0")
-        tkinter.Label(
-            bar, textvariable=self.stat_count, font=(FONT_FAMILY, 8),
-            fg=COLORS["sidebar_label"], bg=COLORS["sidebar"],
-        ).pack(side="right", padx=14)
+    def _pho(v,e,ph):
+        if not v.get(): v.set(ph); e.configure(fg=C["faint"])
+    def _btns(self,p,r,t,cmd):
+        return tkinter.Button(r, text=t, font=(FONT,8), bg=C["card"],
+            fg=C["muted"], activeforeground=C["accent"], relief="flat",
+            cursor="hand2", border=0, command=cmd, padx=10, pady=1)
+    def _scroll(self,e,cv):
+        cv.yview_scroll(int(-1*(e.delta/120)),"units")
 
     # ================================================================
-    # Logic
-    # ================================================================
+    def _main(self):
+        m = tkinter.Frame(self.root, bg=C["bg"])
+        m.grid(row=0, column=1, sticky="nsew")
+        m.grid_columnconfigure(0, weight=1); m.grid_rowconfigure(1, weight=1)
 
-    def _load_config_to_ui(self):
-        """.env -> UI"""
-        self._cfg_SMS_BASE_URL.set(app_config.SMS_BASE_URL)
-        self._cfg_SMS_TOKEN.set(app_config.SMS_TOKEN)
-        self._cfg_SMS_PROJECT_ID.set(app_config.SMS_PROJECT_ID)
-        self._cfg_HTTP_PROXY.set(app_config.HTTP_PROXY)
-        self._cfg_HTTPS_PROXY.set(app_config.HTTPS_PROXY)
-        self._cfg_SMS_ASCRIPTION.set(app_config.SMS_ASCRIPTION)
+        self.step_lbl = tkinter.Label(m, text="Ready", font=(FONT,10),
+            fg=C["muted"], bg=C["bg"], anchor="w")
+        self.step_lbl.grid(row=0, column=0, sticky="ew", padx=24, pady=(18,10))
+        self.progress = ttk.Progressbar(m, mode="indeterminate", length=300)
+
+        tkinter.Label(m, text="Log", font=(FONT,8,"bold"),
+            fg=C["muted"], bg=C["bg"]).grid(row=0, column=0, sticky="e",
+            padx=(0,24), pady=(18,0))
+
+        lf = tkinter.Frame(m, bg=C["log_bg"])
+        lf.grid(row=1, column=0, sticky="nsew", padx=24, pady=(2,6))
+        self.log = tkinter.Text(lf, font=MONO, bg=C["log_bg"], fg=C["muted"],
+            relief="flat", wrap="word", padx=12, pady=10,
+            insertbackground=C["accent"], border=0, highlightthickness=0)
+        self.log.pack(side="left", fill="both", expand=True)
+        sb = tkinter.Scrollbar(lf, bg=C["bg"], troughcolor=C["bg"],
+            activebackground=C["muted"], border=0)
+        sb.pack(side="right", fill="y")
+        self.log.configure(yscrollcommand=sb.set); sb.configure(command=self.log.yview)
+        for tag, fg in [("s","#fff"),("e","#666"),("m","#888"),("w","#555")]:
+            self.log.tag_configure(tag, foreground=fg)
+
+        tkinter.Label(m, text="Results", font=(FONT,8,"bold"),
+            fg=C["muted"], bg=C["bg"]).grid(row=2, column=0, sticky="w",
+            padx=24, pady=(4,3))
+
+        cols = ("u","p","ph","key","t")
+        self.tree = ttk.Treeview(m, columns=cols, show="headings", height=4)
+        for c,t in zip(cols,["Username","Password","Phone","API Key","Time"]):
+            self.tree.heading(c, text=t)
+        for c,w in zip(cols, [130,130,110,260,140]): self.tree.column(c, width=w)
+        style = ttk.Style(); style.theme_use("clam")
+        style.configure("Treeview", background=C["card"], foreground=C["text"],
+            fieldbackground=C["card"], borderwidth=0, font=(FONT,8))
+        style.configure("Treeview.Heading", background=C["panel"],
+            foreground=C["muted"], relief="flat", borderwidth=1,
+            font=(FONT,8,"bold"), padding=(6,3))
+        style.map("Treeview", background=[("selected", C["hover"])])
+        style.map("Treeview.Heading", background=[("active", C["panel"])])
+        self.tree.grid(row=3, column=0, sticky="ew", padx=24, pady=(0,6))
+
+        ar = tkinter.Frame(m, bg=C["bg"])
+        ar.grid(row=4, column=0, sticky="ew", padx=24, pady=(0,18))
+        self._btn(ar,"Copy Key", self._copy_key).pack(side="left", padx=(0,6))
+        self._btn(ar,"Copy All", self._copy_all).pack(side="left", padx=(0,6))
+        self._btn(ar,"Delete",   self._delete).pack(side="left", padx=(0,6))
+        self._btn(ar,"Refresh",  self._reload).pack(side="left", padx=(0,6))
+        self._btn(ar,"Export",   self._export).pack(side="left")
+        self._btn(ar,"Clear Log",self._clear_log).pack(side="right")
+
+    def _btn(self,p,t,cmd):
+        return tkinter.Button(p, text=t, font=(FONT,9), bg=C["card"],
+            fg=C["text"], activeforeground=C["accent"], activebackground=C["hover"],
+            relief="flat", cursor="hand2", border=0, padx=14, pady=4, command=cmd)
+
+    def _statusbar(self):
+        b = tkinter.Frame(self.root, bg=C["panel"], height=26)
+        b.grid(row=1, column=0, columnspan=2, sticky="ew"); b.grid_propagate(False)
+        self.stat_text = StringVar(value="Idle")
+        tkinter.Label(b, textvariable=self.stat_text,
+            font=(FONT,8), fg=C["muted"], bg=C["panel"]).pack(side="left", padx=16)
+        self.stat_count = StringVar(value="Records: 0")
+        tkinter.Label(b, textvariable=self.stat_count,
+            font=(FONT,8), fg=C["muted"], bg=C["panel"]).pack(side="right", padx=16)
+
+    # ================================================================
+    def _load(self):
+        self._k_SMS_BASE_URL.set(app_config.SMS_BASE_URL)
+        self._k_SMS_TOKEN.set(app_config.SMS_TOKEN)
+        self._k_SMS_PROJECT_ID.set(app_config.SMS_PROJECT_ID)
+        self._k_HTTP_PROXY.set(app_config.HTTP_PROXY)
+        self._k_HTTPS_PROXY.set(app_config.HTTPS_PROXY)
+        self._k_SMS_ASCRIPTION.set(app_config.SMS_ASCRIPTION)
+        self._k_SMS_PARAGRAPH.set(app_config.SMS_PARAGRAPH)
         self.count_var.set(app_config.REGISTER_COUNT)
 
-    def _ui_to_config(self):
-        """UI -> .env"""
-        app_config.SMS_BASE_URL = self._cfg_SMS_BASE_URL.get().strip()
-        app_config.SMS_TOKEN = self._cfg_SMS_TOKEN.get().strip()
-        app_config.SMS_PROJECT_ID = self._cfg_SMS_PROJECT_ID.get().strip()
-        app_config.HTTP_PROXY = self._cfg_HTTP_PROXY.get().strip()
-        app_config.HTTPS_PROXY = self._cfg_HTTPS_PROXY.get().strip()
-        app_config.SMS_ASCRIPTION = self._cfg_SMS_ASCRIPTION.get().strip()
-        app_config.REGISTER_COUNT = self.count_var.get()
+    def _sync(self):
+        app_config.SMS_BASE_URL    = self._k_SMS_BASE_URL.get().strip()
+        app_config.SMS_TOKEN       = self._k_SMS_TOKEN.get().strip()
+        app_config.SMS_PROJECT_ID  = self._k_SMS_PROJECT_ID.get().strip()
+        app_config.HTTP_PROXY      = self._k_HTTP_PROXY.get().strip()
+        app_config.HTTPS_PROXY     = self._k_HTTPS_PROXY.get().strip()
+        app_config.SMS_ASCRIPTION  = self._k_SMS_ASCRIPTION.get().strip()
+        app_config.SMS_PARAGRAPH   = self._k_SMS_PARAGRAPH.get().strip()
+        app_config.REGISTER_COUNT  = self.count_var.get()
 
-    def _save_config(self):
-        self._ui_to_config()
-        app_config.save_to_file()
-        self._log("配置已保存到 .env", "success")
-        self.status_var.set("配置已保存")
+    def _save(self):
+        self._sync(); app_config.save_to_file(); self._put("s","config saved")
 
+    # ================================================================
+    # Results: 每个账号存为独立 JSON: data/shangtang-{username}.json
+    # ================================================================
+    def _load_results(self):
+        """热加载: 从磁盘扫描, 只添加树中不存在的账号 (不删除已有行)"""
+        if not self._data_dir.exists(): return
+        existing = {self.tree.item(it)["values"][0] for it in self.tree.get_children()}
+        added = 0
+        for f in sorted(self._data_dir.glob("shangtang-*.json")):
+            try:
+                r = json.loads(f.read_text(encoding="utf-8"))
+                uname = r.get("username","")
+                if uname and uname not in existing:
+                    self.tree.insert("", "end", values=(
+                        uname, r.get("password",""), r.get("phone",""),
+                        r.get("api_key",""), r.get("create_time","")))
+                    added += 1
+            except Exception:
+                pass
+        if added:
+            self._put("m", f"reloaded {added} new account(s)")
+        self.stat_count.set(f"Records: {len(self.tree.get_children())}")
+
+    def _tree_rows(self) -> list[dict]:
+        """从树中提取完整字段, 保留磁盘上已有的额外字段 (不丢失 token 等)"""
+        rows = []
+        for it in self.tree.get_children():
+            v = self.tree.item(it)["values"]
+            uname = v[0]
+            # 尝试从磁盘读取已有完整数据
+            disk = {}
+            try:
+                p = self._data_dir / f"shangtang-{uname}.json"
+                if p.exists():
+                    disk = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+            # 合并: 磁盘数据为基础, 树中可见字段覆盖
+            row = {
+                "platform": disk.get("platform", "商汤科技"),
+                "username": uname,
+                "password": v[1],
+                "tenant_code": disk.get("tenant_code", uname),
+                "user_id": disk.get("user_id", ""),
+                "phone": v[2],
+                "access_token": disk.get("access_token", ""),
+                "refresh_token": disk.get("refresh_token", ""),
+                "api_key": v[3],
+                "api_key_name": disk.get("api_key_name", ""),
+                "create_time": v[4],
+            }
+            rows.append(row)
+        return rows
+
+    def _flush(self):
+        """写回独立 JSON 文件 (只写不删)"""
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+        for r in self._tree_rows():
+            p = self._data_dir / f"shangtang-{r['username']}.json"
+            p.write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.stat_count.set(f"Records: {len(self.tree.get_children())}")
+
+    def _copy_key(self):
+        s = self.tree.selection()
+        if s:
+            k = self.tree.item(s[0])["values"][3]
+            self.root.clipboard_clear(); self.root.clipboard_append(k)
+            self.stat_text.set(f"copied: {k[:25]}...")
+
+    def _copy_all(self):
+        items = self.tree.get_children()
+        if not items: self.stat_text.set("nothing to copy"); return
+        txt = "\n".join(self.tree.item(i)["values"][3] for i in items)
+        self.root.clipboard_clear(); self.root.clipboard_append(txt)
+        self._put("s", f"copied {len(items)} keys")
+        self.stat_text.set(f"copied {len(items)} keys")
+
+    def _delete(self):
+        sels = self.tree.selection()
+        if not sels: self.stat_text.set("select a row first"); return
+        for it in sels:
+            v = self.tree.item(it)["values"]
+            self._put("m", f"deleted: {v[0]}")
+            p = self._data_dir / f"shangtang-{v[0]}.json"
+            try: p.unlink()
+            except Exception: pass
+            self.tree.delete(it)
+        self.stat_count.set(f"Records: {len(self.tree.get_children())}")
+        self.stat_text.set(f"deleted {len(sels)} row(s)")
+
+    def _reload(self):
+        """重新从磁盘扫描, 只合并新账号, 不删除树中已有行"""
+        self._load_results()
+        self._put("s", "reloaded from disk")
+
+    def _export(self):
+        items = self.tree.get_children()
+        if not items: messagebox.showinfo("","no results"); return
+        p = filedialog.asksaveasfilename(defaultextension=".json",
+            filetypes=[("JSON","*.json")], initialfile="shangtang-export.json")
+        if not p: return
+        Path(p).write_text(json.dumps(self._tree_rows(),
+            ensure_ascii=False, indent=2), encoding="utf-8")
+        self._put("s", f"exported {len(items)} to {p}")
+
+    # ================================================================
     def _search_project(self):
-        """搜索接码平台项目"""
-        self._ui_to_config()
-        url = app_config.SMS_BASE_URL
-        token = app_config.SMS_TOKEN
-        if not url or not token:
-            messagebox.showwarning("提示", "请先填写 API 地址和 fcToken")
-            return
-
-        dialog = Toplevel(self.root)
-        dialog.title("搜索项目")
-        dialog.geometry("500x400")
-        dialog.configure(bg=COLORS["bg"])
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        tkinter.Label(
-            dialog, text="搜索接码平台项目", font=(FONT_FAMILY, 12, "bold"),
-            fg=COLORS["text"], bg=COLORS["bg"],
-        ).pack(padx=20, pady=(16, 4))
-
-        search_frame = tkinter.Frame(dialog, bg=COLORS["bg"])
-        search_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tkinter.Label(
-            search_frame, text="关键词:", font=(FONT_FAMILY, 9),
-            bg=COLORS["bg"],
-        ).pack(side="left")
-        search_var = StringVar(value="商汤")
-        tkinter.Entry(
-            search_frame, textvariable=search_var, font=(FONT_FAMILY, 10),
-            relief="flat", highlightthickness=1, highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["accent"], width=20,
-        ).pack(side="left", padx=(8, 8))
-        tkinter.Button(
-            search_frame, text="搜索", font=(FONT_FAMILY, 9),
-            bg=COLORS["accent"], fg="white", relief="flat", cursor="hand2",
-            command=lambda: self._do_search(search_var.get(), tree),
-        ).pack(side="left")
-
-        # 结果列表
-        tree_frame = tkinter.Frame(dialog, bg=COLORS["card_bg"], highlightthickness=1,
-                                  highlightbackground=COLORS["border"])
-        tree_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
-
-        columns = ("id", "name", "price")
-        tree = ttk.Treeview(tree_frame, columns=columns, show="headings", height=8)
-        tree.heading("id", text="ID")
-        tree.heading("name", text="项目名")
-        tree.heading("price", text="价格")
-        tree.column("id", width=80)
-        tree.column("name", width=280)
-        tree.column("price", width=60)
+        self._sync()
+        if not app_config.SMS_BASE_URL or not app_config.SMS_TOKEN:
+            messagebox.showwarning("","fill api url and token first"); return
+        d = Toplevel(self.root); d.title("Projects"); d.geometry("480x380")
+        d.configure(bg=C["bg"]); d.transient(self.root); d.grab_set()
+        tkinter.Label(d, text="Search projects", font=(FONT,11,"bold"),
+            fg=C["accent"], bg=C["bg"]).pack(padx=20, pady=(16,6))
+        sf = tkinter.Frame(d, bg=C["bg"]); sf.pack(fill="x", padx=20, pady=(0,8))
+        qv = StringVar(value="商汤")
+        tkinter.Entry(sf, textvariable=qv, font=(FONT,10), bg=C["input_bg"],
+            fg=C["text"], insertbackground=C["accent"], relief="flat",
+            highlightthickness=1, highlightbackground=C["input_border"],
+            highlightcolor=C["accent2"], width=18).pack(side="left", padx=(0,8))
+        tkinter.Button(sf, text="Search", font=(FONT,9), bg=C["accent"],
+            fg="#000", relief="flat", cursor="hand2", border=0, padx=14, pady=3,
+            command=lambda: self._do_search(qv.get(), tree)).pack(side="left")
+        tf = tkinter.Frame(d, bg=C["card"])
+        tf.pack(fill="both", expand=True, padx=20, pady=(0,8))
+        tree = ttk.Treeview(tf, columns=("id","n","p"), show="headings", height=10)
+        tree.heading("id",text="ID"); tree.column("id",width=60)
+        tree.heading("n",text="Name"); tree.column("n",width=300)
+        tree.heading("p",text="$"); tree.column("p",width=40)
         tree.pack(side="left", fill="both", expand=True)
-        ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview).pack(side="right", fill="y")
-        tree.configure(yscrollcommand=tkinter.Scrollbar(tree_frame, orient="vertical").set)
-
-        # 选择按钮
         def select():
-            sel = tree.selection()
-            if sel:
-                item = tree.item(sel[0])
-                vals = item["values"]
-                self._cfg_SMS_PROJECT_ID.set(str(vals[0]))
-                self.project_name_label.configure(text=f"{vals[1]} (ID={vals[0]})")
-                self._save_config()
-                dialog.destroy()
-                self._log(f"已选择项目: {vals[1]} (ID={vals[0]})", "success")
-
-        self._btn(dialog, "选择此项目", select, width=14).pack(pady=(0, 16))
-
-        # 初始搜索
+            s = tree.selection()
+            if s:
+                v = tree.item(s[0])["values"]
+                self._k_SMS_PROJECT_ID.set(str(v[0]))
+                self.pname_lbl.configure(text=f" {v[1]}"); self._save()
+                d.destroy(); self._put("s", f"selected: {v[1]}")
+        tkinter.Button(d, text="Select", font=(FONT,9), bg=C["accent"],
+            fg="#000", relief="flat", cursor="hand2", border=0, padx=16,
+            pady=4, command=select).pack(pady=(0,16))
         self._do_search("商汤", tree)
 
-    def _do_search(self, keyword, tree):
-        """执行项目搜索"""
+    def _do_search(self, kw, tree):
         tree.delete(*tree.get_children())
         try:
-            proxies = app_config.proxies or None
             import requests
             s = requests.Session()
-            s.headers.update({
-                "fcToken": app_config.SMS_TOKEN,
-                "User-Agent": "Mozilla/5.0",
-            })
-            params = {"page": 1, "pagesize": 50}
-            if len(keyword) >= 3:
-                params["project_name"] = keyword
-            resp = s.get(
-                f"{app_config.SMS_BASE_URL}/api/user/projects",
-                params=params, proxies=proxies, timeout=15,
-            )
-            data = resp.json()
-            if data.get("code") == 1:
-                projects = data.get("data", [])
-                for p in projects:
-                    tree.insert("", "end", values=(p["id"], p["project_name"], p.get("money", "?")))
-                self._log(f"找到 {len(projects)} 个项目", "info")
-            else:
-                self._log(f"搜索失败: {data.get('msg')}", "error")
-        except Exception as e:
-            self._log(f"搜索异常: {e}", "error")
+            s.headers.update({"fcToken": app_config.SMS_TOKEN, "User-Agent": "Mozilla/5.0"})
+            p = {"page": 1, "pagesize": 50}
+            if len(kw) >= 3: p["project_name"] = kw
+            r = s.get(f"{app_config.SMS_BASE_URL}/api/user/projects",
+                params=p, proxies=app_config.proxies or None, timeout=15)
+            d = r.json()
+            if d.get("code") == 1:
+                for x in d.get("data", []):
+                    tree.insert("","end",values=(x["id"],x["project_name"],x.get("money","?")))
+                self._put("m", f"found {len(d['data'])} projects")
+            else: self._put("e", f"search failed: {d.get('msg')}")
+        except Exception as e: self._put("e", str(e))
 
-    def _start_register(self):
-        if self._running:
-            return
-        self._ui_to_config()
-        app_config.save_to_file()
-
+    # ================================================================
+    def _start(self):
+        if self._running: return
+        self._sync(); app_config.save_to_file()
         if not app_config.SMS_PROJECT_ID:
-            messagebox.showwarning("提示", "请先选择项目")
-            return
-
-        self._running = True
-        self._stop_flag.clear()
-        self._success = 0
-        self._fail = 0
-
-        self.start_btn.configure(state="disabled", text="运行中...")
+            messagebox.showwarning("","select project first"); return
+        self._running = True; self._stop_flag.clear()
+        self._success = 0; self._fail = 0
+        self.start_btn.configure(state="disabled", text="Running")
         self.stop_btn.configure(state="normal")
-        self.progress.pack(fill="x", pady=(4, 0))
+        self.progress.grid(row=0, column=0, sticky="ew", padx=24)
         self.progress.start(8)
-        self.step_label.configure(text="正在启动...")
-        self.tree.delete(*self.tree.get_children())
+        self.step_lbl.configure(text="Starting...")
         self._clear_log()
+        self._msg_queue.put(("S", "Starting..."))
+        threading.Thread(target=self._worker, daemon=True).start()
 
-        thread = threading.Thread(target=self._register_worker, daemon=True)
-        thread.start()
+    def _stop(self):
+        self._stop_flag.set(); self._put("w","stopping...")
 
-    def _stop_register(self):
-        self._stop_flag.set()
-        self.status_var.set("正在停止...")
-        self._log("用户请求停止", "warning")
-
-    def _register_worker(self):
-        """后台注册线程"""
+    def _worker(self):
         try:
-            proxies = app_config.proxies or None
-
+            px = app_config.proxies or None
             sms = SMSClient(
-                base_url=app_config.SMS_BASE_URL,
-                token=app_config.SMS_TOKEN,
+                base_url=app_config.SMS_BASE_URL, token=app_config.SMS_TOKEN,
                 project_id=app_config.SMS_PROJECT_ID,
                 ascription=app_config.SMS_ASCRIPTION,
-                proxies=proxies,
-            )
-
+                paragraph=app_config.SMS_PARAGRAPH, proxies=px)
             orch = RegistrationOrchestrator(sms)
-            orch.on_event = lambda evt, msg: self._msg_queue.put(("event", evt, msg))
-
-            total = app_config.REGISTER_COUNT
-            for i in range(total):
+            orch.on_event = lambda e,m: self._msg_queue.put(("ev",e,m))
+            for i in range(app_config.REGISTER_COUNT):
                 if self._stop_flag.is_set():
-                    self._msg_queue.put(("log", "warning", "用户停止"))
-                    break
-
-                self._msg_queue.put(("status", f"第 {i+1}/{total} 次注册"))
-                self._msg_queue.put(("step", f"开始第 {i+1} 次注册 ({i+1}/{total})"))
-
+                    self._msg_queue.put(("L","w","stopped")); break
+                self._msg_queue.put(("S", f"#{i+1}/{app_config.REGISTER_COUNT}"))
                 try:
-                    result = orch.run()
-                    if result:
-                        self._success += 1
-                        self._msg_queue.put(("result", result))
-                        self._msg_queue.put(("log", "success",
-                            f"--- 第 {i+1} 次成功: {result['username']} | {result['api_key'][:25]}..."))
+                    r = orch.run()
+                    if r:
+                        self._success += 1; self._msg_queue.put(("R",r))
+                        self._msg_queue.put(("L","s",f"#{i+1} OK: {r['username']}"))
                     else:
                         self._fail += 1
-                        self._msg_queue.put(("log", "error", f"--- 第 {i+1} 次失败"))
+                        self._msg_queue.put(("L","e",f"#{i+1} FAIL"))
                 except Exception as e:
                     self._fail += 1
-                    self._msg_queue.put(("log", "error", f"第 {i+1} 次异常: {e}"))
-
-                if i < total - 1 and not self._stop_flag.is_set():
-                    time.sleep(3)
-
+                    self._msg_queue.put(("L","e",f"#{i+1} error: {e}"))
+                time.sleep(2)
         except Exception as e:
-            self._msg_queue.put(("log", "error", f"致命错误: {e}\n{traceback.format_exc()}"))
+            self._msg_queue.put(("L","e",f"fatal: {e}\n{traceback.format_exc()}"))
         finally:
-            self._msg_queue.put(("done", f"完成: 成功 {self._success} | 失败 {self._fail}"))
+            self._msg_queue.put(("D",f"done: {self._success} ok / {self._fail} fail"))
 
-    def _poll_queue(self):
-        """轮询消息队列，更新 UI"""
+    def _poll(self):
         try:
             while True:
-                msg = self._msg_queue.get_nowait()
-                typ = msg[0]
-                if typ == "log":
-                    self._log(msg[2], msg[1])
-                elif typ == "step":
-                    self.step_label.configure(text=msg[1])
-                elif typ == "status":
-                    self.status_var.set(msg[1])
-                elif typ == "event":
-                    _, evt, text = msg
-                    tag = {"step": "step", "done": "success", "info": "info"}.get(evt, "info")
-                    self._log(text, tag)
-                elif typ == "result":
-                    r = msg[1]
-                    self.tree.insert("", "end", values=(
-                        r["username"], r["password"], r["phone"],
-                        r["api_key"], r["create_time"],
-                    ))
-                    # 滚动到底部
-                    self.tree.yview_moveto(1)
-                elif typ == "done":
-                    self._running = False
-                    self.progress.stop()
-                    self.progress.pack_forget()
-                    self.start_btn.configure(state="normal", text="开始注册")
+                m = self._msg_queue.get_nowait(); t = m[0]
+                if t == "L":   self._put(m[2], m[1])
+                elif t == "S": self.step_lbl.configure(text=m[1]); self.stat_text.set(m[1])
+                elif t == "ev":self._put({"done":"s"}.get(m[1],"m"), m[2])
+                elif t == "R":
+                    r = m[1]
+                    self.tree.insert("","end",values=(
+                        r["username"],r["password"],r["phone"],
+                        r["api_key"],r["create_time"]))
+                    self._flush(); self.tree.yview_moveto(1)
+                elif t == "D":
+                    self._running = False; self.progress.stop()
+                    self.progress.grid_forget()
+                    self.start_btn.configure(state="normal", text="Start")
                     self.stop_btn.configure(state="disabled")
-                    self.step_label.configure(text=msg[1])
-                    self.status_var.set(msg[1])
-                    self.stat_count.set(f"成功: {self._success} | 失败: {self._fail}")
-                    self._log(msg[1], "success")
-        except queue.Empty:
-            pass
+                    self.step_lbl.configure(text=m[1])
+                    self.stat_text.set("Idle"); self._put("s", m[1])
+        except queue.Empty: pass
+        self.root.after(100, self._poll)
 
-        self.root.after(100, self._poll_queue)
-
-    def _log(self, text, tag="info"):
-        self.log_text.insert("end", f"{text}\n", tag)
-        self.log_text.see("end")
-
+    def _put(self, tag, text):
+        self.log.insert("end", f"  {text}\n", tag); self.log.see("end")
     def _clear_log(self):
-        self.log_text.delete("1.0", "end")
-
-    def _copy_api_key(self):
-        sel = self.tree.selection()
-        if sel:
-            api_key = self.tree.item(sel[0])["values"][3]
-            self.root.clipboard_clear()
-            self.root.clipboard_append(api_key)
-            self.status_var.set(f"已复制: {api_key[:20]}...")
-
-    def _export_results(self):
-        items = self.tree.get_children()
-        if not items:
-            messagebox.showinfo("提示", "暂无结果可导出")
-            return
-        path = filedialog.asksaveasfilename(
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")],
-            initialfile="accounts.json",
-        )
-        if not path:
-            return
-        results = []
-        for item in items:
-            vals = self.tree.item(item)["values"]
-            results.append({
-                "username": vals[0], "password": vals[1],
-                "phone": vals[2], "api_key": vals[3], "time": vals[4],
-            })
-        Path(path).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._log(f"已导出 {len(results)} 条结果到 {path}", "success")
-
-    # ================================================================
-    # Run
-    # ================================================================
-
+        self.log.delete("1.0","end")
     def run(self):
         self.root.mainloop()
 
-
-# ================================================================
-# Entry Point
-# ================================================================
-
 def main():
-    # 初始化日志
-    setup_log()
-    app = SenseNovaGUI()
-    app.run()
-
+    setup_log(); SenseNovaGUI().run()
 
 if __name__ == "__main__":
     main()

@@ -30,8 +30,6 @@ class RegistrationOrchestrator:
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.results: list[dict] = []
-        self.storage_path = self.data_dir / "accounts.json"
-        # 回调：EventCallback(event_type, message)、ProgressCallback(current_step)
         self.on_event: Optional[Callable[[str, str], None]] = None
 
     def run(self) -> Optional[dict]:
@@ -129,20 +127,20 @@ class RegistrationOrchestrator:
                 pass
 
     def _persist(self, result: dict):
-        """追加单条结果到 JSON 文件"""
-        p = self.storage_path
-        existing = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
-        existing.append(result)
-        p.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-        log.info(f"[保存] {p}")
+        """每条结果存为独立 JSON: data/shangtang-{username}.json"""
+        name = result.get("username", "unknown")
+        p = self.data_dir / f"shangtang-{name}.json"
+        p.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        log.info(f"[保存] {p.name}")
 
     def _emit(self, event: str, msg: str):
         log.info(f"[{event}] {msg}")
         if self.on_event:
             self.on_event(event, msg)
 
-    def export(self, path: str = ""):
-        p = Path(path) if path else self.storage_path
+    def export(self, path: str):
+        """导出所有结果为单一 JSON 文件（需要显式指定路径）"""
+        p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(self.results, ensure_ascii=False, indent=2), encoding="utf-8")
         log.info(f"[导出] {p}")

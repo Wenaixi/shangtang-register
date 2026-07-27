@@ -21,6 +21,7 @@ class SMSClient:
         card_engine: bool = False,
         code_id: Optional[str] = None,
         ascription: str = "",
+        paragraph: str = "",
         proxies: Optional[dict] = None,
     ):
         self.base_url = base_url.rstrip("/")
@@ -29,6 +30,7 @@ class SMSClient:
         self.card_engine = card_engine
         self.code_id = code_id
         self.ascription = ascription
+        self.paragraph = paragraph
         self.current_phone: Optional[str] = None
         self.proxies = proxies
 
@@ -75,7 +77,12 @@ class SMSClient:
     def _get_phone_official(self) -> str:
         payload = {"project_id": self.project_id}
         if self.ascription:
-            payload["ascription"] = int(self.ascription)
+            try:
+                payload["ascription"] = int(self.ascription)
+            except (ValueError, TypeError):
+                pass  # 非数字(如占位符文本)则忽略
+        if self.paragraph:
+            payload["paragraph"] = self.paragraph
 
         data = self._post("/api/user/getPhone", payload)
         if data.get("code") == 1:
